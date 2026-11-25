@@ -1,1 +1,1 @@
-plugins { id 'com.android.application' }; android { namespace 'com.retro.skyroute'; compileSdk 35; defaultConfig { applicationId 'com.retro.skyroute'; minSdk 23; targetSdk 34; versionCode 8; versionName '0.8' } }
+plugins { id 'com.android.application' }; android { namespace 'com.retro.skyroute'; compileSdk 35; defaultConfig { applicationId 'com.retro.skyroute'; minSdk 23; targetSdk 34; versionCode 9; versionName '0.9' } }
