@@ -7,9 +7,9 @@ import java.util.Random;
 
 final class RocketAudio {
  private final SoundPool pool;
- private final int[] ids=new int[10];
- private final boolean[] ready=new boolean[10];
- private int engine=0, brake=0;
+ private final int[] ids=new int[12];
+ private final boolean[] ready=new boolean[12];
+ private int engine=0, brake=0, turbine=0, exhaust=0; private float spool=0; private long audioTick=0;
  private boolean active=true; private android.media.MediaPlayer music; private boolean musicWanted=false; private volatile boolean released=false;
  RocketAudio(Context ctx){
   pool=new SoundPool.Builder().setMaxStreams(6).setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).build();
@@ -18,7 +18,7 @@ final class RocketAudio {
  }
  private static void le(DataOutputStream d,int n,int bytes)throws IOException{for(int j=0;j<bytes;j++)d.writeByte(n>>(8*j));}
  private static void write(File f,int kind)throws IOException{
-  int hz=22050;double[] lengths={.09,1,.5,.9,1.15,1.25,.25,.13,.25,.5};int count=(int)(hz*lengths[kind]);Random random=new Random(77+kind);double phase=0,noise=0;
+  int hz=22050;double[] lengths={.09,1,.5,.9,1.15,1.25,.25,.13,.25,.5,1,1};int count=(int)(hz*lengths[kind]);Random random=new Random(77+kind);double phase=0,noise=0;
   try(DataOutputStream d=new DataOutputStream(new BufferedOutputStream(new FileOutputStream(f)))){
    d.writeBytes("RIFF");le(d,36+count*2,4);d.writeBytes("WAVEfmt ");le(d,16,4);le(d,1,2);le(d,1,2);le(d,hz,4);le(d,hz*2,4);le(d,2,2);le(d,16,2);d.writeBytes("data");le(d,count*2,4);
    for(int j=0;j<count;j++){double t=j/(double)hz,u=j/(double)count,v=0;noise=.82*noise+.18*(random.nextDouble()*2-1);
@@ -32,9 +32,11 @@ final class RocketAudio {
      case 6: phase+=2*Math.PI*(260+1100*u)/hz;v=Math.sin(phase)*Math.sin(Math.PI*u);break;
      case 7: v=Math.sin(2*Math.PI*660*t)*Math.sin(Math.PI*u);break;
      case 8: v=(Math.sin(2*Math.PI*1040*t)+.35*Math.sin(2*Math.PI*1560*t))*Math.sin(Math.PI*u);break;
+     case 10: v=.35*Math.sin(2*Math.PI*240*t)+.20*Math.sin(2*Math.PI*480*t)+.13*Math.sin(2*Math.PI*720*t)+.08*Math.sin(2*Math.PI*960*t)+.13*noise;break;
+     case 11: v=.75*noise+.28*(random.nextDouble()*2-1)+.12*Math.sin(2*Math.PI*80*t);break;
      case 9: v=Math.sin(2*Math.PI*440*t)*Math.sin(Math.PI*u)*(.5+.5*Math.sin(2*Math.PI*8*t));break;
     }
-    if(kind!=1&&kind!=2)v*=Math.min(1,j/100.0)*Math.min(1,(count-j)/100.0);
+    if(kind!=1&&kind!=2&&kind!=10&&kind!=11)v*=Math.min(1,j/100.0)*Math.min(1,(count-j)/100.0);
     le(d,(int)(Math.max(-1,Math.min(1,v)) * 23000),2);
    }
   }
@@ -42,9 +44,17 @@ final class RocketAudio {
  void effect(int i){if(active&&ready[i])pool.play(ids[i],.65f,.65f,2,0,1f);}
  void update(boolean running,float speed,float thrust,boolean braking,int ship){
   if(!active||!running){stop();return;}
-  float rate=Math.min(2f,.65f+.45f*speed+.65f*thrust+.025f*ship),vol=.07f+.12f*speed+.48f*thrust;
+  long now=android.os.SystemClock.elapsedRealtime();float dt=audioTick==0?.016f:Math.min(.1f,(now-audioTick)/1000f);audioTick=now;
+  float target=braking?0:thrust;spool+=(target-spool)*(1f-(float)Math.exp(-dt*(target>spool?4.5f:2.3f)));
+  float rate=.65f+.28f*speed+.45f*spool,vol=.10f+.10f*speed+.12f*spool;
   if(engine==0&&ready[1])engine=pool.play(ids[1],vol,vol,1,-1,rate);
   if(engine!=0){pool.setRate(engine,rate);pool.setVolume(engine,vol,vol);}
+  float whineRate=Math.min(2f,.50f+1.30f*spool+.10f*speed+.008f*ship),whineVol=.025f+.38f*spool;
+  float roarVol=.015f+.68f*spool*spool,roarRate=.75f+.60f*spool;
+  if(turbine==0&&ready[10])turbine=pool.play(ids[10],whineVol,whineVol,1,-1,whineRate);
+  if(exhaust==0&&ready[11])exhaust=pool.play(ids[11],roarVol,roarVol,1,-1,roarRate);
+  if(turbine!=0){pool.setRate(turbine,whineRate);pool.setVolume(turbine,whineVol,whineVol);}
+  if(exhaust!=0){pool.setRate(exhaust,roarRate);pool.setVolume(exhaust,roarVol,roarVol);}
   if(braking&&speed>.01f){if(brake==0&&ready[2])brake=pool.play(ids[2],.27f,.27f,1,-1,1f);}else if(brake!=0){pool.stop(brake);brake=0;}
  }
  void setMusic(boolean wanted){if(musicWanted!=wanted){musicWanted=wanted;syncMusic();}}
@@ -62,7 +72,7 @@ final class RocketAudio {
  double pad=0;for(int interval:new int[]{0,minor,7}){double freq=440*Math.pow(2,(root+12+interval-69)/12.0);pad+=.035*Math.sin(2*Math.PI*freq*t)*Math.sin(Math.PI*(b%8)/8);}
  double v=(kick+hat+snare+low+arp+pad)*Math.min(1,Math.min(j,count-j)/220.0);le(d,(int)(Math.max(-1,Math.min(1,v))*26000),2);}
  }}
- void stop(){if(engine!=0)pool.stop(engine);if(brake!=0)pool.stop(brake);engine=brake=0;}
+ void stop(){if(engine!=0)pool.stop(engine);if(brake!=0)pool.stop(brake);if(turbine!=0)pool.stop(turbine);if(exhaust!=0)pool.stop(exhaust);engine=brake=turbine=exhaust=0;spool=0;audioTick=0;}
  void suspend(){active=false;stop();pool.autoPause();syncMusic();}
  void resume(){active=true;syncMusic();}
  void release(){released=true;stop();pool.release();if(music!=null){music.release();music=null;}}
