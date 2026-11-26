@@ -1,3 +1,18 @@
-plugins { id 'com.android.application' }; android { namespace 'com.retro.skyroute'; compileSdk 35; defaultConfig { applicationId 'com.retro.skyroute'; minSdk 23; targetSdk 34; versionCode 21; versionName "0.19.1" } }
+plugins { id 'com.android.application' }; android { namespace 'com.retro.skyroute'; compileSdk 35; defaultConfig { applicationId 'com.retro.skyroute'; minSdk 23; targetSdk 35; versionCode 22; versionName "0.20" } }
 
 dependencies { implementation 'com.google.android.gms:play-services-ads:24.9.0'; implementation 'com.google.android.ump:user-messaging-platform:3.2.0' }
+
+android {
+    if (System.getenv('SKY_UPLOAD_STORE_FILE')) {
+        signingConfigs {
+            release {
+                storeFile file(System.getenv('SKY_UPLOAD_STORE_FILE'))
+                storePassword System.getenv('SKY_UPLOAD_STORE_PASSWORD')
+                keyAlias System.getenv('SKY_UPLOAD_KEY_ALIAS')
+                keyPassword System.getenv('SKY_UPLOAD_KEY_PASSWORD')
+            }
+        }
+        buildTypes { release { signingConfig signingConfigs.release } }
+    }
+}
+dependencies { implementation 'com.android.billingclient:billing:8.0.0' }
