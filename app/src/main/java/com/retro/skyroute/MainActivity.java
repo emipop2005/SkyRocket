@@ -6,6 +6,7 @@ public class MainActivity extends Activity {
  private com.google.android.gms.ads.interstitial.InterstitialAd failureAd;
  private boolean adsInitialized, adLoading, foreground, privacyBusy;
  private long lastAdShown;
+ private String consentDiagnostic="Consent update pending";
  // Test inventory only until production approval and device testing.
  private static final String FAILURE_AD_UNIT="ca-app-pub-3940256099942544/1033173712";
  private static final String PRODUCTION_FAILURE_AD_UNIT="ca-app-pub-3492192108048953/3597854174";
@@ -13,9 +14,10 @@ public class MainActivity extends Activity {
   consent=com.google.android.ump.UserMessagingPlatform.getConsentInformation(this);
   consent.requestConsentInfoUpdate(this,new com.google.android.ump.ConsentRequestParameters.Builder().build(),()->{
    if(isFinishing()||isDestroyed())return;
+   consentDiagnostic="Consent update successful";
    privacyBusy=true;
-   com.google.android.ump.UserMessagingPlatform.loadAndShowConsentFormIfRequired(this,error->{privacyBusy=false;enableAds();});
-  },error->enableAds());
+   com.google.android.ump.UserMessagingPlatform.loadAndShowConsentFormIfRequired(this,error->{privacyBusy=false;if(error!=null)consentDiagnostic="Form error "+error.getErrorCode()+": "+error.getMessage();enableAds();});
+  },error->{consentDiagnostic="Update error "+error.getErrorCode()+": "+error.getMessage();enableAds();});
  }
  private void enableAds(){
   if(isFinishing()||isDestroyed()||consent==null||!consent.canRequestAds()||game==null||game.isPro())return;
@@ -46,7 +48,7 @@ public class MainActivity extends Activity {
  private void privacyOptions(){
   if(consent==null||privacyBusy)return;
   if(consent.getPrivacyOptionsRequirementStatus()!=com.google.android.ump.ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED){
-   new android.app.AlertDialog.Builder(this).setTitle("Privacy options").setMessage("Privacy choices are not currently required for your region.").setPositiveButton("OK",null).show();return;
+   new android.app.AlertDialog.Builder(this).setTitle("Privacy options").setMessage("UMP: "+consentDiagnostic+"\nConsent status: "+consent.getConsentStatus()+"\nPrivacy options: "+consent.getPrivacyOptionsRequirementStatus()+"\nForm available: "+consent.isConsentFormAvailable()+"\nCan request ads: "+consent.canRequestAds()).setPositiveButton("OK",null).show();return;
   }
   privacyBusy=true;failureAd=null;
   com.google.android.ump.UserMessagingPlatform.showPrivacyOptionsForm(this,error->{privacyBusy=false;enableAds();});
