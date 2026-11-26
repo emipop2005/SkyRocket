@@ -21,3 +21,24 @@ jobs:
         with:
           name: SkyRocket-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Build signed Play bundle
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          SKY_UPLOAD_KEYSTORE_BASE64: ${{ secrets.SKY_UPLOAD_KEYSTORE_BASE64 }}
+          SKY_UPLOAD_STORE_PASSWORD: ${{ secrets.SKY_UPLOAD_STORE_PASSWORD }}
+          SKY_UPLOAD_KEY_ALIAS: ${{ secrets.SKY_UPLOAD_KEY_ALIAS }}
+          SKY_UPLOAD_KEY_PASSWORD: ${{ secrets.SKY_UPLOAD_KEY_PASSWORD }}
+        run: |
+          set -eu
+          test -n "$SKY_UPLOAD_KEYSTORE_BASE64"
+          export SKY_UPLOAD_STORE_FILE="$RUNNER_TEMP/skyrocket-upload.p12"
+          trap 'rm -f "$SKY_UPLOAD_STORE_FILE"' EXIT
+          printf '%s' "$SKY_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$SKY_UPLOAD_STORE_FILE"
+          gradle bundleRelease
+          jarsigner -verify app/build/outputs/bundle/release/app-release.aab
+      - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        with:
+          name: SkyRocket-Play-bundle
+          path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
