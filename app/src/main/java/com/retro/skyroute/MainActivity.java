@@ -2,10 +2,55 @@ package com.retro.skyroute;
 import android.app.Activity;import android.os.Bundle;import android.view.*;import android.graphics.*;import java.util.*;
 public class MainActivity extends Activity {
 
- private void setupConsent(){}
- private void enableAds(){}
- private void showFailureAd(){}
- private void privacyOptions(){new android.app.AlertDialog.Builder(this).setMessage("Diagnostic build: ads and consent disabled.").setPositiveButton("OK",null).show();}
+ private com.google.android.ump.ConsentInformation consent;
+ private com.google.android.gms.ads.interstitial.InterstitialAd failureAd;
+ private boolean adsInitialized, adLoading, foreground, privacyBusy;
+ private long lastAdShown;
+ // Test inventory only until production approval and device testing.
+ private static final String FAILURE_AD_UNIT="ca-app-pub-3940256099942544/1033173712";
+ private static final String PRODUCTION_FAILURE_AD_UNIT="ca-app-pub-3492192108048953/3597854174";
+ private void setupConsent(){
+  consent=com.google.android.ump.UserMessagingPlatform.getConsentInformation(this);
+  consent.requestConsentInfoUpdate(this,new com.google.android.ump.ConsentRequestParameters.Builder().build(),()->{
+   if(isFinishing()||isDestroyed())return;
+   privacyBusy=true;
+   com.google.android.ump.UserMessagingPlatform.loadAndShowConsentFormIfRequired(this,error->{privacyBusy=false;enableAds();});
+  },error->enableAds());
+ }
+ private void enableAds(){
+  if(isFinishing()||isDestroyed()||consent==null||!consent.canRequestAds()||game==null||game.isPro())return;
+  if(adsInitialized){loadFailureAd();return;}
+  adsInitialized=true;
+  com.google.android.gms.ads.MobileAds.initialize(this,status->runOnUiThread(()->loadFailureAd()));
+ }
+ private void loadFailureAd(){
+  if(isFinishing()||isDestroyed()||adLoading||failureAd!=null||!adsInitialized||consent==null||!consent.canRequestAds()||game==null||game.isPro())return;
+  adLoading=true;
+  com.google.android.gms.ads.interstitial.InterstitialAd.load(this,FAILURE_AD_UNIT,new com.google.android.gms.ads.AdRequest.Builder().build(),new com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback(){
+   @Override public void onAdLoaded(com.google.android.gms.ads.interstitial.InterstitialAd ad){adLoading=false;if(!isDestroyed()&&consent.canRequestAds()&&!game.isPro())failureAd=ad;}
+   @Override public void onAdFailedToLoad(com.google.android.gms.ads.LoadAdError error){adLoading=false;}
+  });
+ }
+ private void showFailureAd(){
+  if(!foreground||privacyBusy||isFinishing()||isDestroyed()||game.isPro()||consent==null||!consent.canRequestAds())return;
+  if(failureAd==null){loadFailureAd();return;}
+  if(lastAdShown!=0&&android.os.SystemClock.elapsedRealtime()-lastAdShown<60000)return;
+  com.google.android.gms.ads.interstitial.InterstitialAd ad=failureAd;failureAd=null;
+  ad.setFullScreenContentCallback(new com.google.android.gms.ads.FullScreenContentCallback(){
+   @Override public void onAdShowedFullScreenContent(){lastAdShown=android.os.SystemClock.elapsedRealtime();}
+   @Override public void onAdDismissedFullScreenContent(){loadFailureAd();}
+   @Override public void onAdFailedToShowFullScreenContent(com.google.android.gms.ads.AdError error){loadFailureAd();}
+  });
+  ad.show(this);
+ }
+ private void privacyOptions(){
+  if(consent==null||privacyBusy)return;
+  if(consent.getPrivacyOptionsRequirementStatus()!=com.google.android.ump.ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED){
+   new android.app.AlertDialog.Builder(this).setTitle("Privacy options").setMessage("Privacy choices are not currently required for your region.").setPositiveButton("OK",null).show();return;
+  }
+  privacyBusy=true;failureAd=null;
+  com.google.android.ump.UserMessagingPlatform.showPrivacyOptionsForm(this,error->{privacyBusy=false;enableAds();});
+ }
  Game game; public void onResume(){super.onResume();foreground=true;enableAds();if(game!=null){game.startSensor();game.audio.resume();}} public void onPause(){foreground=false;if(game!=null){game.stopSensor();game.audio.suspend();game.keys.clear();if(game.screen==1&&!game.dead&&!game.win)game.paused=true;}super.onPause();} public void onDestroy(){if(game!=null)game.audio.release();super.onDestroy();} public void onCreate(Bundle b){super.onCreate(b);getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);game=new Game();setContentView(game);setupConsent();}
  class Game extends View implements android.hardware.SensorEventListener {
  RocketAudio audio=new RocketAudio(MainActivity.this); int lastCount=-1; boolean wasThrust=false; Canvas c; Paint p=new Paint(3); float w,h,pos,x,alt,vy,speed; int level=0; boolean dead,win,paused; float swipeX,swipeY,slide=0; boolean tracking=false; float deathAge=0; boolean falling=false; boolean adDue=false; boolean isPro(){return prefs.getBoolean("verifiedPro",false);} void recordFailure(){if(isPro()){adDue=false;return;}int count=(prefs.getInt("adFailureCount",0)+1)%3;prefs.edit().putInt("adFailureCount",count).apply();adDue=count==0;} void showFailureAdIfReady(){if(!adDue)return;adDue=false;if(isPro())return;MainActivity.this.showFailureAd();} boolean marathon=false; long crashMeters; float crashPos; long distance(){return dead?crashMeters:(long)(pos*metersPerTile);} String dist(long m){return mph?String.format(java.util.Locale.US,"%,d ft",Math.round(m*3.280839895)):String.format(java.util.Locale.US,"%,d m",m);} int continueTier(){long m=crashMeters;return m<1000?0:m<3000?1:m<5000?2:m<10000?3:m<20000?4:m<30000?5:m<50000?6:m<75000?7:m<100000?8:9;} String continueProductId(){return "marathon_continue_"+(continueTier()+1);} String continuePrice(){String[] prices={"$0.99","$1.99","$2.99","$4.99","$9.99","$14.99","$24.99","$49.99","$74.99","$100.99"};return prices[continueTier()];} void die(boolean fall){if(dead)return;if(marathon){crashPos=pos;crashMeters=distance();if(crashMeters>prefs.getLong("marathonBest",0))prefs.edit().putLong("marathonBest",crashMeters).apply();}recordFailure();playEffect(fall?4:outOfFuel?9:3);dead=true;falling=fall;deathAge=0;keys.clear();} int screen=4, ship=0,page=0; float intro=0,elapsed=0,countdown=3,finishTime=0; android.content.SharedPreferences prefs=getSharedPreferences("progress",0); int credits=prefs.getInt("credits",0); boolean menuSounds=prefs.getBoolean("menuSounds",true),gameSounds=prefs.getBoolean("gameSounds",true),gameMusic=prefs.getBoolean("gameMusic",true); boolean mph=prefs.getBoolean("mph",false); boolean tiltMode=prefs.getBoolean("tilt",false); int sensitivity=prefs.getInt("tiltSensitivity",1); android.hardware.SensorManager sm=(android.hardware.SensorManager)getSystemService(SENSOR_SERVICE); android.hardware.Sensor sensor=sm.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY); float tiltRaw,neutral,steer; boolean sampled=false,calibrate=true; void startSensor(){if(sensor==null)sensor=sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);if(sensor!=null)sm.registerListener(this,sensor,android.hardware.SensorManager.SENSOR_DELAY_GAME);else tiltMode=false;calibrate=true;} void stopSensor(){sm.unregisterListener(this);} public void onAccuracyChanged(android.hardware.Sensor s,int a){} public void onSensorChanged(android.hardware.SensorEvent e){int rot=getWindowManager().getDefaultDisplay().getRotation();float g=rot==Surface.ROTATION_90?-e.values[1]:rot==Surface.ROTATION_270?e.values[1]:-e.values[0];tiltRaw=sampled?tiltRaw*.82f+g*.18f:g;sampled=true;if(calibrate){neutral=tiltRaw;calibrate=false;}} float steering(){if(!tiltMode||sensor==null)return (held(2)?1:0)-(held(1)?1:0);float d=tiltRaw-neutral;float mag=Math.max(0,Math.abs(d)-.25f);return Math.copySign(Math.min(1,mag/(sensitivity==0?5f:sensitivity==1?3.5f:2f)),-d);} float thrust=0; final float metersPerTile=2.5f; int[] topKmh={100,125,150,175,200,225,250,275,300,325,1000}; float maxSpeed(){return topKmh[ship]/3.6f/metersPerTile;} float performance(){return Math.min(10,ship+1+upgrade()*.6f);} float brakePower(){return 3.5f+performance()*1.65f;} float accelerationPower(){return (3.5f+(ship+1)*2.1f)*(1f+.18f*ship)*(1f+.25f*upgrade());} String speedLabel(float kmh){return Math.round(kmh*(mph?.621371f:1f))+(mph?" mph":" km/h");} String[] ships={"PIONEER","INTERCEPTOR","PHANTOM","NEMESIS","DARK MATTER","VOID REAPER","SOLAR FANG","NEON WRAITH","OBSIDIAN","STAR EMPEROR","SKY ROCKET"}; final boolean TEST_SHOP=true; int[] prices={0,1500,4000,6500,9000,12000,15000,-1,-1,-1,-2}; String[] premiumSkins={"NEON CIRCUIT","CARBON EMBER","IMPERIAL GOLD","WORLD CHAMPION EDITION"}; int[] hull={0xffa8b7c7,0xffd64c49,0xff478ee0,0xffe5bb55,0xff9156c9,0xff26354b,0xffff7834,0xff23e8d0,0xff53536c,0xffffd875}; String[] worlds={"Lunar","Crimson","Neon","Frozen","Solar","Obsidian","Phantom","Emerald","Titan","Void","Aurora","Quantum"}; String[] routes={"Causeway","Rift","Labyrinth","Gauntlet","Citadel"}; String[] premiumTracks={"Event Horizon","Inferno Spiral","Black Star","Omega Rift","Death Orbit","Final Singularity"}; String trackName(int n){return n>=60?premiumTracks[n-60]:worlds[n/5]+" "+routes[n%5];} int completed(){int k=0;for(int i=0;i<60;i++)if(prefs.getBoolean("done"+i,false))k++;return k;} boolean unlocked(int n){if(n<0||n>=66)return false;for(int k=0;k<n;k++)if(!prefs.getBoolean("done"+k,false))return false;return true;} int selectedTrack=-1; int obstacle(int row,int lane){if(marathon&&screen==1){if(row<12||row%9!=0||!tile(row,lane))return 0;int m=marathonMask(row);if(Integer.bitCount(m)<2||lane==Integer.numberOfTrailingZeros(m))return 0;return 1+(row+lane)%3;}if(row>=length()-36){int remain=length()-row;return lane==1&&level>=10&&remain==16?1:0;}if(row<12||!tile(row,lane)||tunnel(row,lane))return 0;int m=mask(level,row);if(Integer.bitCount(m)<2||row%(level>=45?22:level>=25?17:level>=10?12:9)!=0)return 0;int safe=Integer.numberOfTrailingZeros(m);if(lane==safe)return 0;return 1+(row+lane+level)%3;} float obstacleHeight(int type){return type==1?.30f:type==2?.48f:.65f;} int length(){return 5*(100+level*4);} int finishEntry(){return length()-8;} boolean finishTunnel(int row,int lane){return lane==1&&row>=finishEntry()&&row<length();} boolean tunnel(int row,int lane){if(marathon&&screen==1)return false;return finishTunnel(row,lane)||level>=2&&row>12&&row<length()-36&&row%(level>=25?60:level>=10?40:24)>=(level>=25?40:level>=10?26:14)&&row%(level>=25?60:level>=10?40:24)<=(level>=25?45:level>=10?30:17)&&lane==(row/(level>=25?60:level>=10?40:24)+level)%3&&tile(row,lane);} String time(float t){return String.format(java.util.Locale.US,"%02d:%05.2f",(int)t/60,t%60);} int upgrade(){return 0;} boolean newRecord=false; void complete(){playEffect(5);win=true;speed=0;alt=0;finishTime=elapsed;float old=prefs.getFloat("longBest"+level,Float.MAX_VALUE);newRecord=elapsed<old;credits+=250;android.content.SharedPreferences.Editor e=prefs.edit().putInt("credits",credits);if(elapsed<old)e.putFloat("longBest"+level,elapsed);e.putBoolean("done"+level,true).apply();saveRun();} float finishFlight=0; boolean finishing=false; float jumpBuffer=0; boolean jumpLatch=false,raceStarted=false,grounded=true; long last; Map<Integer,Integer> keys=new HashMap<>(); int[] colors={0xff527cc4,0xffa34caa,0xff43a678,0xffd4a34e};
