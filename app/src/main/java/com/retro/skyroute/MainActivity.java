@@ -19,7 +19,7 @@ public class MainActivity extends Activity {
    boolean was=playSignedIn;
    if(task.isSuccessful()){
     playSignedIn=task.getResult().isAuthenticated();
-    playStatus=playSignedIn?"Connected to Google Play Games":"Tap here to sign in";
+    playStatus=playSignedIn?"Connected to Google Play Games":"";
     android.util.Log.i("SkyRocketGames","Authenticated: "+playSignedIn);
    }else{
     playSignedIn=false;
