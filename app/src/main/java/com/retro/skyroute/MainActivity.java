@@ -171,7 +171,35 @@ public class MainActivity extends Activity {
  }
  billing.consumeAsync(ConsumeParams.newBuilder().setPurchaseToken(token).build(),(result,t)->runOnUiThread(()->{processing.remove(token);if(result.getResponseCode()==BillingClient.BillingResponseCode.OK){if(fuelItem)game.useFuel();if(marathonItem)game.useContinue(id);}}));
  }
- Game game; public void onResume(){super.onResume();foreground=true;enableAds();restore(false);if(billing!=null&&billing.isReady())loadProducts();if(game!=null){game.startSensor();game.audio.resume();}if(playSignedIn)checkPlayGames(false);} public void onPause(){foreground=false;if(game!=null){game.stopSensor();game.audio.suspend();game.keys.clear();if(game.screen==1&&!game.dead&&!game.win)game.paused=true;}super.onPause();} public void onDestroy(){if(game!=null)game.audio.release();if(billing!=null)billing.endConnection();super.onDestroy();} public void onCreate(Bundle b){super.onCreate(b);setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);game=new Game();setContentView(game);setupConsent();setupBilling();}
+ Game game;
+ private boolean startupAuthDone=false, startupAuthStarted=false;
+ private final android.os.Handler startupHandler=new android.os.Handler(android.os.Looper.getMainLooper());
+ private final Runnable startupFallback=()->{if(!startupAuthDone){android.util.Log.w("SkyRocketGames","Startup authentication callback timeout");startupAuthDone=true;maybeStartGame();}};
+ private void maybeStartGame(){
+  if(!startupAuthDone||!foreground||!hasWindowFocus()||game!=null||isFinishing()||isDestroyed())return;
+  startupHandler.removeCallbacks(startupFallback);
+  game=new Game();setContentView(game);game.startSensor();game.audio.resume();setupConsent();setupBilling();syncPlayScores();
+ }
+ private void beginStartupAuth(){
+  if(startupAuthStarted)return;startupAuthStarted=true;
+  startupHandler.postDelayed(startupFallback,30000);
+  try{
+   com.google.android.gms.games.PlayGamesSdk.initialize(this);playReady=true;
+   com.google.android.gms.games.PlayGames.getGamesSignInClient(this).isAuthenticated().addOnCompleteListener(task->{
+    if(isDestroyed()||isFinishing())return;
+    playSignedIn=task.isSuccessful()&&task.getResult()!=null&&task.getResult().isAuthenticated();
+    playStatus=playSignedIn?"Connected to Google Play Games":"";
+    startupAuthDone=true;startupHandler.removeCallbacks(startupFallback);
+    maybeStartGame();if(game!=null&&playSignedIn)syncPlayScores();
+   });
+  }catch(RuntimeException error){android.util.Log.w("SkyRocketGames","Startup authentication unavailable",error);startupAuthDone=true;startupHandler.removeCallbacks(startupFallback);maybeStartGame();}
+ }
+ @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused)maybeStartGame();}
+ public void onResume(){super.onResume();foreground=true;if(game==null){beginStartupAuth();maybeStartGame();return;}enableAds();restore(false);if(billing!=null&&billing.isReady())loadProducts();game.startSensor();game.audio.resume();if(playSignedIn)checkPlayGames(false);}
+ public void onPause(){foreground=false;if(game!=null){game.stopSensor();game.audio.suspend();game.keys.clear();if(game.screen==1&&!game.dead&&!game.win)game.paused=true;}super.onPause();}
+ public void onDestroy(){startupHandler.removeCallbacks(startupFallback);if(game!=null)game.audio.release();if(billing!=null)billing.endConnection();super.onDestroy();}
+ public void onCreate(Bundle b){super.onCreate(b);setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);View waiting=new View(this);waiting.setBackgroundColor(Color.BLACK);setContentView(waiting);}
+
  class Game extends View implements android.hardware.SensorEventListener {
  RocketAudio audio=new RocketAudio(MainActivity.this); int lastCount=-1; boolean wasThrust=false; Canvas c; Paint p=new Paint(3); float w,h,pos,x,alt,vy,speed; int level=0; boolean dead,win,paused; float swipeX,swipeY,slide=0; boolean tracking=false; float deathAge=0; boolean falling=false; boolean adDue=false; boolean isPro(){return prefs.getBoolean("verifiedPro",false);} void recordFailure(){if(isPro()){adDue=false;return;}int count=(prefs.getInt("adFailureCount",0)+1)%3;prefs.edit().putInt("adFailureCount",count).apply();adDue=count==0;} void showFailureAdIfReady(){if(!adDue)return;adDue=false;if(isPro())return;MainActivity.this.showFailureAd();} boolean marathon=false; long crashMeters; float crashPos; long distance(){return dead?crashMeters:(long)(pos*metersPerTile);} String dist(long m){return mph?String.format(java.util.Locale.US,"%,d ft",Math.round(m*3.280839895)):String.format(java.util.Locale.US,"%,d m",m);} int continueTier(){long m=crashMeters;return m<1000?0:m<5000?1:m<10000?2:m<25000?3:m<50000?4:m<100000?5:6;} String continueProductId(){return "marathon_continue_"+(continueTier()+1);} String continuePrice(){return price(continueProductId());}
  void useFuel(){if(screen!=10||prefs.getInt("paidFuel",0)<1)return;if(!prefs.edit().putInt("paidFuel",prefs.getInt("paidFuel",0)-1).commit())return;fuel=100;lowFuelWarned=false;fuelFlash=0;screen=1;paused=false;resumingCountdown=true;countdown=3;lastCount=-1;keys.clear();last=0;}
