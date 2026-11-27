@@ -3,19 +3,34 @@ import com.android.billingclient.api.*;
 import android.app.Activity;import android.os.Bundle;import android.view.*;import android.graphics.*;import java.util.*;
 public class MainActivity extends Activity {
  private static final String[] PLAY_IDS={"CgkIyp7a-50bEAIQAQ","CgkIyp7a-50bEAIQAg","CgkIyp7a-50bEAIQAw","CgkIyp7a-50bEAIQBA","CgkIyp7a-50bEAIQBQ","CgkIyp7a-50bEAIQBg","CgkIyp7a-50bEAIQBw","CgkIyp7a-50bEAIQCA","CgkIyp7a-50bEAIQCQ","CgkIyp7a-50bEAIQCg","CgkIyp7a-50bEAIQCw","CgkIyp7a-50bEAIQDA","CgkIyp7a-50bEAIQDQ","CgkIyp7a-50bEAIQDg","CgkIyp7a-50bEAIQDw","CgkIyp7a-50bEAIQEA","CgkIyp7a-50bEAIQEQ","CgkIyp7a-50bEAIQEg","CgkIyp7a-50bEAIQEw","CgkIyp7a-50bEAIQFA","CgkIyp7a-50bEAIQFQ","CgkIyp7a-50bEAIQFg","CgkIyp7a-50bEAIQFw","CgkIyp7a-50bEAIQGA","CgkIyp7a-50bEAIQGQ","CgkIyp7a-50bEAIQGg","CgkIyp7a-50bEAIQGw","CgkIyp7a-50bEAIQHA","CgkIyp7a-50bEAIQHQ","CgkIyp7a-50bEAIQHg","CgkIyp7a-50bEAIQHw","CgkIyp7a-50bEAIQIA","CgkIyp7a-50bEAIQIQ","CgkIyp7a-50bEAIQIg","CgkIyp7a-50bEAIQIw","CgkIyp7a-50bEAIQJA","CgkIyp7a-50bEAIQJQ","CgkIyp7a-50bEAIQJg","CgkIyp7a-50bEAIQJw","CgkIyp7a-50bEAIQKA","CgkIyp7a-50bEAIQKQ","CgkIyp7a-50bEAIQKg","CgkIyp7a-50bEAIQKw","CgkIyp7a-50bEAIQLA","CgkIyp7a-50bEAIQLQ","CgkIyp7a-50bEAIQLg","CgkIyp7a-50bEAIQLw","CgkIyp7a-50bEAIQMA","CgkIyp7a-50bEAIQMQ","CgkIyp7a-50bEAIQMg","CgkIyp7a-50bEAIQMw","CgkIyp7a-50bEAIQNA","CgkIyp7a-50bEAIQNQ","CgkIyp7a-50bEAIQNg","CgkIyp7a-50bEAIQNw","CgkIyp7a-50bEAIQOA","CgkIyp7a-50bEAIQOQ","CgkIyp7a-50bEAIQOg","CgkIyp7a-50bEAIQOw","CgkIyp7a-50bEAIQPA","CgkIyp7a-50bEAIQPQ","CgkIyp7a-50bEAIQPg","CgkIyp7a-50bEAIQPw","CgkIyp7a-50bEAIQQA","CgkIyp7a-50bEAIQQQ","CgkIyp7a-50bEAIQQg","CgkIyp7a-50bEAIQQw","CgkIyp7a-50bEAIQRA"};
- private boolean playSignedIn=false, playSigningIn=false;
+ private boolean playSignedIn=false, playSigningIn=false, playRefreshPending=false;
+ private boolean playReady=false;
  private String playStatus="Connecting to Google Play Games...";
  private final Map<Integer,Long> sentScores=new HashMap<>();
  private void checkPlayGames(boolean interactive){
-  if(playSigningIn||isDestroyed())return;
+  if(!playReady||isDestroyed()||isFinishing())return;
+  if(playSigningIn){if(!interactive)playRefreshPending=true;return;}
   playSigningIn=true;
+  playStatus="Connecting to Google Play Games...";
   com.google.android.gms.games.GamesSignInClient client=com.google.android.gms.games.PlayGames.getGamesSignInClient(this);
   (interactive?client.signIn():client.isAuthenticated()).addOnCompleteListener(task->{
    playSigningIn=false;
+   if(isDestroyed()||isFinishing())return;
    boolean was=playSignedIn;
-   playSignedIn=task.isSuccessful()&&task.getResult().isAuthenticated();
-   playStatus=playSignedIn?"Tap here for world rankings":"Tap here to sign in";
+   if(task.isSuccessful()){
+    playSignedIn=task.getResult().isAuthenticated();
+    playStatus=playSignedIn?"Tap here for world rankings":"Tap here to sign in";
+    android.util.Log.i("SkyRocketGames","Authenticated: "+playSignedIn);
+   }else{
+    playSignedIn=false;
+    Exception error=task.getException();
+    String code=error instanceof com.google.android.gms.common.api.ApiException?String.valueOf(((com.google.android.gms.common.api.ApiException)error).getStatusCode()):"unknown";
+    playStatus="Sign-in failed ("+code+"). Tap to retry";
+    android.util.Log.w("SkyRocketGames","Authentication failed: "+code,error);
+   }
    if(playSignedIn){if(!was)sentScores.clear();syncPlayScores();}
+   if(game!=null)game.invalidate();
+   if(playRefreshPending){playRefreshPending=false;checkPlayGames(false);}
   });
  }
  private void submitPlayScore(int track,long value){
@@ -32,6 +47,7 @@ public class MainActivity extends Activity {
   for(int n=0;n<66;n++){float best=game.prefs.getFloat("longBest"+n,Float.MAX_VALUE);if(best>0&&best<Float.MAX_VALUE)submitPlayScore(n,Math.round(best*1000d));}
  }
  private void openPlayLeaderboard(int track){
+  if(playSigningIn)return;
   if(!playSignedIn){checkPlayGames(true);return;}
   syncPlayScores();
   com.google.android.gms.games.PlayGames.getLeaderboardsClient(this).getLeaderboardIntent(PLAY_IDS[track+2]).addOnSuccessListener(intent->startActivityForResult(intent,701)).addOnFailureListener(error->notice("World rankings unavailable. Please try again."));
@@ -137,7 +153,7 @@ public class MainActivity extends Activity {
  }
  billing.consumeAsync(ConsumeParams.newBuilder().setPurchaseToken(token).build(),(result,t)->runOnUiThread(()->{processing.remove(token);if(result.getResponseCode()==BillingClient.BillingResponseCode.OK){if(fuelItem)game.useFuel();if(marathonItem)game.useContinue(id);}}));
  }
- Game game; public void onResume(){super.onResume();foreground=true;enableAds();restore(false);if(billing!=null&&billing.isReady())loadProducts();if(game!=null){game.startSensor();game.audio.resume();}checkPlayGames(false);} public void onPause(){foreground=false;if(game!=null){game.stopSensor();game.audio.suspend();game.keys.clear();if(game.screen==1&&!game.dead&&!game.win)game.paused=true;}super.onPause();} public void onDestroy(){if(game!=null)game.audio.release();if(billing!=null)billing.endConnection();super.onDestroy();} public void onCreate(Bundle b){super.onCreate(b);getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);game=new Game();setContentView(game);setupConsent();setupBilling();com.google.android.gms.games.PlayGamesSdk.initialize(this);checkPlayGames(false);}
+ Game game; public void onResume(){super.onResume();foreground=true;enableAds();restore(false);if(billing!=null&&billing.isReady())loadProducts();if(game!=null){game.startSensor();game.audio.resume();}checkPlayGames(false);} public void onPause(){foreground=false;if(game!=null){game.stopSensor();game.audio.suspend();game.keys.clear();if(game.screen==1&&!game.dead&&!game.win)game.paused=true;}super.onPause();} public void onDestroy(){if(game!=null)game.audio.release();if(billing!=null)billing.endConnection();super.onDestroy();} public void onCreate(Bundle b){super.onCreate(b);setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);game=new Game();setContentView(game);setupConsent();setupBilling();game.post(()->{if(isDestroyed()||isFinishing())return;com.google.android.gms.games.PlayGamesSdk.initialize(this);playReady=true;checkPlayGames(false);});}
  class Game extends View implements android.hardware.SensorEventListener {
  RocketAudio audio=new RocketAudio(MainActivity.this); int lastCount=-1; boolean wasThrust=false; Canvas c; Paint p=new Paint(3); float w,h,pos,x,alt,vy,speed; int level=0; boolean dead,win,paused; float swipeX,swipeY,slide=0; boolean tracking=false; float deathAge=0; boolean falling=false; boolean adDue=false; boolean isPro(){return prefs.getBoolean("verifiedPro",false);} void recordFailure(){if(isPro()){adDue=false;return;}int count=(prefs.getInt("adFailureCount",0)+1)%3;prefs.edit().putInt("adFailureCount",count).apply();adDue=count==0;} void showFailureAdIfReady(){if(!adDue)return;adDue=false;if(isPro())return;MainActivity.this.showFailureAd();} boolean marathon=false; long crashMeters; float crashPos; long distance(){return dead?crashMeters:(long)(pos*metersPerTile);} String dist(long m){return mph?String.format(java.util.Locale.US,"%,d ft",Math.round(m*3.280839895)):String.format(java.util.Locale.US,"%,d m",m);} int continueTier(){long m=crashMeters;return m<1000?0:m<5000?1:m<10000?2:m<25000?3:m<50000?4:m<100000?5:6;} String continueProductId(){return "marathon_continue_"+(continueTier()+1);} String continuePrice(){return price(continueProductId());}
  void useFuel(){if(screen!=10||prefs.getInt("paidFuel",0)<1)return;if(!prefs.edit().putInt("paidFuel",prefs.getInt("paidFuel",0)-1).commit())return;fuel=100;lowFuelWarned=false;fuelFlash=0;screen=1;paused=false;resumingCountdown=true;countdown=3;lastCount=-1;keys.clear();last=0;}
